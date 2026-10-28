@@ -5,11 +5,11 @@ Shared code for the suite assistant (v2). Each app declares its tools with this 
 ## Install (in an app)
 
 ```json
-"@daniellevy/assistant-kit": "github:danielmlevy1/assistant-kit#v0.1.0",
+"@daniellevy/assistant-kit": "https://codeload.github.com/danielmlevy1/assistant-kit/tar.gz/<commit sha on main>",
 "zod": "^4.1.0"
 ```
 
-`dist/` is committed so a git install needs no build step. CI fails if it is stale: run `npm run build` before committing.
+Pinned to a commit tarball over HTTPS: no git or SSH needed in CI or on Vercel, and every app states exactly which kit it runs. `dist/` is committed so the install needs no build step; CI fails if it is stale, so run `npm run build` before committing.
 
 ## Contract v1
 
@@ -66,4 +66,4 @@ export const { GET, POST, OPTIONS } = createAssistantRoutes({ app: "recipes", to
 
 ## Releasing
 
-Bump `version`, `npm run build`, commit, tag `vX.Y.Z`, then bump the tag in each app.
+Bump `version`, `npm run build`, merge to main, then update the commit sha in each app's `package.json` (and `npm install` to refresh the lockfile). The daily check reports each app's `toolsVersion`, so a lagging app shows up there.
