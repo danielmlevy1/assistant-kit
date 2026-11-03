@@ -9,7 +9,7 @@ describe("manifest", () => {
     const m = (await (await routes.GET(new Request(URL_))).json()) as any;
     expect(m.app).toBe("sample");
     expect(m.contractVersion).toBe(1);
-    expect(m.tools.map((t: any) => t.name)).toEqual(["list_items", "add_item", "remove_item"]);
+    expect(m.tools.map((t: any) => t.name)).toEqual(["list_items", "add_item", "remove_item", "restore_item"]);
     const add = m.tools.find((t: any) => t.name === "add_item");
     expect(add.input_schema).toMatchObject({ type: "object", required: ["name"] });
     expect(add.input_schema.$schema).toBeUndefined();
@@ -44,7 +44,8 @@ describe("calls", () => {
     expect(items).toHaveLength(1);
 
     const e = await call(routes, { execute: p.data.proposal });
-    expect(e).toEqual({ status: 200, data: { ok: true, result: { id: "2", name: "eggs" } } });
+    expect(e.status).toBe(200);
+    expect(e.data).toMatchObject({ ok: true, result: { id: "2", name: "eggs" } });
     expect(items).toHaveLength(2);
 
     const again = await call(routes, { execute: p.data.proposal });
@@ -105,5 +106,61 @@ describe("calls", () => {
     const r = await routes.OPTIONS(new Request(URL_, { method: "OPTIONS" }));
     expect(r.status).toBe(204);
     expect(r.headers.get("access-control-allow-headers")).toMatch(/Authorization/);
+  });
+});
+
+describe("undo", () => {
+  it("marks undoable writes in the manifest", () => {
+    const tools = sampleApp().routes.manifest.tools;
+    expect(tools.find((t) => t.name === "remove_item")?.undoable).toBe(true);
+    expect(tools.find((t) => t.name === "restore_item")?.undoable).toBeUndefined();
+    expect(tools.find((t) => t.name === "list_items")?.undoable).toBeUndefined();
+  });
+
+  it("returns a signed undo proposal that puts things back once", async () => {
+    const { routes, items } = sampleApp();
+    const p = await call(routes, { tool: "remove_item", input: { id: "a" } });
+    const e = await call(routes, { execute: p.data.proposal });
+    expect(items).toHaveLength(0);
+    expect(e.data.undo).toMatchObject({ app: "sample", tool: "restore_item", input: { id: "a" }, summary: "Put “milk” back on the grocery list" });
+    expect(typeof e.data.undo.confirmToken).toBe("string");
+
+    const u = await call(routes, { execute: e.data.undo });
+    expect(u.status).toBe(200);
+    expect(items.map((i) => i.name)).toEqual(["milk"]);
+    expect(u.data.undo).toBeUndefined(); // restore_item has no undo of its own
+
+    expect((await call(routes, { execute: e.data.undo })).data.code).toBe("confirm_token_replayed");
+  });
+
+  it("binds the undo to the same user", async () => {
+    const { routes, items } = sampleApp();
+    const p = await call(routes, { tool: "remove_item", input: { id: "a" } }, "u1");
+    const e = await call(routes, { execute: p.data.proposal }, "u1");
+    expect((await call(routes, { execute: e.data.undo }, "u2")).data.code).toBe("confirm_token_mismatch");
+    expect(items).toHaveLength(0);
+  });
+
+  it("refuses an undo whose input was changed", async () => {
+    const { routes } = sampleApp();
+    const p = await call(routes, { tool: "add_item", input: { name: "eggs" } });
+    const e = await call(routes, { execute: p.data.proposal });
+    expect(e.data.undo).toMatchObject({ tool: "remove_item", input: { id: "2" } });
+    const r = await call(routes, { execute: { ...e.data.undo, input: { id: "a" } } });
+    expect(r.data.code).toBe("confirm_token_mismatch");
+  });
+
+  it("still reports the write when the undo hook fails", async () => {
+    const { routes, items } = sampleApp({ secret: "test-secret", brokenUndo: true });
+    const p = await call(routes, { tool: "add_item", input: { name: "eggs" } });
+    const e = await call(routes, { execute: p.data.proposal });
+    expect(e).toEqual({ status: 200, data: { ok: true, result: { id: "2", name: "eggs" } } });
+    expect(items).toHaveLength(2);
+  });
+
+  it("only lets write tools declare undo", () => {
+    expect(() =>
+      defineTool({ name: "t", kind: "read", description: "d", input: z.object({}), run: async () => null, undo: () => null } as any),
+    ).toThrow(/only write tools/);
   });
 });

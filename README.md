@@ -20,7 +20,7 @@ One URL per app, `{basePath}/api/assistant`:
 | `GET` | | manifest `{ app, contractVersion: 1, toolsVersion, tools: [{ name, description, kind, input_schema, probe? }] }` |
 | `POST` | `{ tool, input }` (read) | `{ ok: true, result }` |
 | `POST` | `{ tool, input }` (write) | `{ ok: true, proposal: { app, tool, input, summary, preview?, confirmToken } }`, nothing written |
-| `POST` | `{ execute: proposal }` | verify token, burn nonce, run once: `{ ok: true, result }` |
+| `POST` | `{ execute: proposal }` | verify token, burn nonce, run once: `{ ok: true, result, undo? }` |
 
 Errors are `{ ok: false, code, error }`: 400 `unknown_tool` / `invalid_input` / `not_a_write` / `bad_request`, 401 `unauthorized`, 403 `confirm_token_*`, 422 `tool_error` (a refusal written for the user), 500 `internal` / `confirm_token_unconfigured`.
 
@@ -50,6 +50,21 @@ export const addGroceryItem = defineTool({
 - Input schemas are `z.object`s without transforms (the same parse runs at propose and execute). Descriptions are written for the model and live next to the code, so they can't drift.
 - `propose` may return a resolved `input` (an id looked up, a title filled in); that is what gets signed and executed. Throw `ToolError` for a refusal the user should read.
 - Give at least one read tool and one write tool a `probe`.
+
+### Undo
+
+A write tool can say how to put things back:
+
+```ts
+export const archiveRecipe = defineTool({
+  name: "archive_recipe",
+  kind: "write",
+  // …input, propose, run as usual
+  undo: (ctx, input, result) => ({ tool: "restore_recipe", input: { id: input.id } }),
+});
+```
+
+After a successful execute the kit proposes that inverse write (another write tool of the same app) and returns it as `undo`: a normal signed proposal, with the summary from the inverse tool's own `propose`. It runs only if the user taps Undo, which executes it like any other proposal. Return null when there is nothing to undo. If the hook or the inverse's `propose` throws, the write still reports success and simply has no Undo. Tools with an `undo` hook show `undoable: true` in the manifest.
 
 ## Routes (Next.js)
 

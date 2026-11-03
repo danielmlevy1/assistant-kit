@@ -5,7 +5,9 @@
  *   GET  {base}            → manifest
  *   POST {base} { tool, input }   → read: { ok, result }
  *                                   write: { ok, proposal: { tool, input, summary, preview?, confirmToken } }
- *   POST {base} { execute: proposal } → verify token, burn nonce, run once → { ok, result }
+ *   POST {base} { execute: proposal } → verify token, burn nonce, run once → { ok, result, undo? }
+ *     undo (tools with an `undo` hook): a signed proposal of the write that puts
+ *     things back, minted like any other. It runs only if it is executed in turn.
  *
  * Errors are always { ok: false, code, error } with 400 / 401 / 403 / 422 / 500.
  */
@@ -17,7 +19,7 @@ import {
   verifyConfirmToken,
   type NonceStore,
 } from "./confirm-token.js";
-import { buildManifest, ToolError, type AnyTool, type ToolContext } from "./tool.js";
+import { buildManifest, ToolError, type AnyTool, type ToolContext, type WriteTool } from "./tool.js";
 import type { Manifest } from "./manifest.js";
 
 export interface AssistantRoutesOptions {
@@ -79,6 +81,34 @@ export function createAssistantRoutes(opts: AssistantRoutesOptions): AssistantRo
     }
   }
 
+  // Propose a write and sign it. Shared by calls and by undo proposals.
+  async function proposeSigned(ctx: ToolContext, tool: WriteTool, rawInput: unknown, key: string) {
+    const parsed = tool.input.parse(rawInput ?? {});
+    const p = await tool.propose(ctx, parsed);
+    // Re-parse a resolved input so what's signed is exactly what execute will accept.
+    const input = p.input !== undefined ? tool.input.parse(p.input) : parsed;
+    const summary = p.summary.trim();
+    const confirmToken = mintConfirmToken(key, { app: opts.app, uid: ctx.uid, tool: tool.name, input, summary });
+    return { app: opts.app, tool: tool.name, input, summary, ...(p.preview !== undefined ? { preview: p.preview } : {}), confirmToken };
+  }
+
+  // The undo proposal for a write that just ran, or undefined. Never fails the write.
+  async function undoFor(ctx: ToolContext, tool: WriteTool, input: Record<string, unknown>, result: unknown) {
+    if (!tool.undo) return undefined;
+    try {
+      const target = await tool.undo(ctx, input, result);
+      if (!target) return undefined;
+      const inverse = byName.get(target.tool);
+      if (!inverse || inverse.kind !== "write") throw new Error(`undo names "${target.tool}", which is not a write tool of this app`);
+      const key = secret();
+      if (!key) return undefined;
+      return await proposeSigned(ctx, inverse, target.input, key);
+    } catch (err) {
+      onError(err, `${tool.name} (undo)`);
+      return undefined;
+    }
+  }
+
   async function handleCall(ctx: ToolContext, body: Record<string, unknown>): Promise<Response> {
     const tool = byName.get(String(body.tool ?? ""));
     if (!tool) return fail(400, "unknown_tool", `No tool named "${String(body.tool ?? "")}".`);
@@ -91,15 +121,7 @@ export function createAssistantRoutes(opts: AssistantRoutesOptions): AssistantRo
       }
       const key = secret();
       if (!key) return fail(500, "confirm_token_unconfigured", explainTokenFailure("confirm_token_unconfigured"));
-      const p = await tool.propose(ctx, parsed.data);
-      // Re-parse a resolved input so what's signed is exactly what execute will accept.
-      const input = p.input !== undefined ? tool.input.parse(p.input) : parsed.data;
-      const summary = p.summary.trim();
-      const confirmToken = mintConfirmToken(key, { app: opts.app, uid: ctx.uid, tool: tool.name, input, summary });
-      return json({
-        ok: true,
-        proposal: { app: opts.app, tool: tool.name, input, summary, ...(p.preview !== undefined ? { preview: p.preview } : {}), confirmToken },
-      });
+      return json({ ok: true, proposal: await proposeSigned(ctx, tool, parsed.data, key) });
     });
   }
 
@@ -119,7 +141,11 @@ export function createAssistantRoutes(opts: AssistantRoutesOptions): AssistantRo
     // The signature already pins the input; parsing gives the tool typed data.
     const parsed = tool.input.safeParse(execute.input ?? {});
     if (!parsed.success) return fail(400, "invalid_input", "Input doesn't match the tool's schema.", { issues: zodIssues(parsed.error) });
-    return runSafely(tool, async () => json({ ok: true, result: await tool.run(ctx, parsed.data) }));
+    return runSafely(tool, async () => {
+      const result = await tool.run(ctx, parsed.data);
+      const undo = await undoFor(ctx, tool, parsed.data, result);
+      return json({ ok: true, result, ...(undo ? { undo } : {}) });
+    });
   }
 
   return {

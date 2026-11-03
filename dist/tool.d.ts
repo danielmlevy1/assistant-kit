@@ -41,12 +41,25 @@ export interface Proposal<I> {
     /** Extra display data for the confirm card. Not signed, never executed. */
     preview?: unknown;
 }
+/** The write that reverses one that just ran: another write tool of the same app, and its input. */
+export interface UndoTarget {
+    tool: string;
+    input: unknown;
+}
 export interface WriteTool<S extends Schema = Schema, R = unknown> extends ToolBase<S> {
     kind: "write";
     /** Check the write against live data and describe it. Writes nothing. */
     propose(ctx: ToolContext, input: z.output<S>): Promise<Proposal<z.output<S>>>;
     /** Perform exactly this one write through the app's write core. */
     run(ctx: ToolContext, input: z.output<S>): Promise<R>;
+    /**
+     * Optional: after `run` succeeds, name the write that puts things back (e.g.
+     * restore_recipe after archive_recipe), built from the input and `run`'s result.
+     * Return null when there is nothing to undo. The kit proposes it like any other
+     * write, so the undo is a signed proposal with the app's own summary, and only
+     * runs if the user taps Undo.
+     */
+    undo?(ctx: ToolContext, input: z.output<S>, result: R): UndoTarget | null | Promise<UndoTarget | null>;
 }
 export type AnyTool = ReadTool<any, any> | WriteTool<any, any>;
 export declare function defineTool<S extends Schema, R>(def: ReadTool<S, R>): ReadTool<S, R>;

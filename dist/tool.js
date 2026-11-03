@@ -19,6 +19,8 @@ export function defineTool(def) {
         throw new Error(`Tool name "${def.name}" must be snake_case, under 48 chars.`);
     if (!def.description?.trim())
         throw new Error(`Tool "${def.name}" needs a description.`);
+    if (def.undo !== undefined && def.kind !== "write")
+        throw new Error(`Tool "${def.name}": only write tools can have undo.`);
     if (def.probe !== undefined)
         def.input.parse(def.probe);
     return def;
@@ -40,6 +42,7 @@ export function buildManifest(app, tools) {
         description: t.description.trim(),
         kind: t.kind,
         input_schema: jsonSchema(t.input),
+        ...(t.kind === "write" && t.undo ? { undoable: true } : {}),
         ...(t.probe !== undefined ? { probe: t.probe } : {}),
     }));
     const toolsVersion = createHash("sha256")

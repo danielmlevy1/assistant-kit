@@ -19,6 +19,7 @@ export {
   type Proposal,
   type ReadTool,
   type ToolContext,
+  type UndoTarget,
   type WriteTool,
 } from "./tool.js";
 export { createAssistantRoutes, type AssistantRoutes, type AssistantRoutesOptions } from "./routes.js";

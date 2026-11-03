@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { createAssistantRoutes, defineTool, memoryNonceStore, ToolError } from "../src/index.js";
 
-export function sampleApp(opts: { secret?: string | undefined } = { secret: "test-secret" }) {
+export function sampleApp(opts: { secret?: string | undefined; brokenUndo?: boolean } = { secret: "test-secret" }) {
   const items: { id: string; name: string }[] = [{ id: "a", name: "milk" }];
+  const trash: { id: string; name: string }[] = [];
   const nonces = memoryNonceStore();
   const tools = [
     defineTool({
@@ -25,6 +26,10 @@ export function sampleApp(opts: { secret?: string | undefined } = { secret: "tes
         items.push(item);
         return item;
       },
+      undo: (_ctx, _input, result) => {
+        if (opts.brokenUndo) throw new Error("undo hook broke");
+        return { tool: "remove_item", input: { id: result.id } };
+      },
     }),
     defineTool({
       name: "remove_item",
@@ -38,8 +43,25 @@ export function sampleApp(opts: { secret?: string | undefined } = { secret: "tes
       },
       run: async (_ctx, input) => {
         const at = items.findIndex((i) => i.id === input.id);
-        items.splice(at, 1);
+        trash.push(...items.splice(at, 1));
         return { removed: input.id };
+      },
+      undo: (_ctx, input) => ({ tool: "restore_item", input: { id: input.id } }),
+    }),
+    defineTool({
+      name: "restore_item",
+      kind: "write",
+      description: "Put a removed grocery item back.",
+      input: z.object({ id: z.string() }),
+      propose: async (_ctx, input) => {
+        const item = trash.find((i) => i.id === input.id);
+        if (!item) throw new ToolError("That item isn't in the trash.");
+        return { summary: `Put “${item.name}” back on the grocery list` };
+      },
+      run: async (_ctx, input) => {
+        const at = trash.findIndex((i) => i.id === input.id);
+        items.push(...trash.splice(at, 1));
+        return { restored: input.id };
       },
     }),
   ];
