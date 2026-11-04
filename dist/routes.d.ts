@@ -5,7 +5,9 @@
  *   GET  {base}            → manifest
  *   POST {base} { tool, input }   → read: { ok, result }
  *                                   write: { ok, proposal: { tool, input, summary, preview?, confirmToken } }
- *   POST {base} { execute: proposal } → verify token, burn nonce, run once → { ok, result }
+ *   POST {base} { execute: proposal } → verify token, burn nonce, run once → { ok, result, undo? }
+ *     undo (tools with an `undo` hook): a signed proposal of the write that puts
+ *     things back, minted like any other. It runs only if it is executed in turn.
  *
  * Errors are always { ok: false, code, error } with 400 / 401 / 403 / 422 / 500.
  */

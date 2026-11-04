@@ -15,6 +15,8 @@ export interface ManifestTool {
   description: string;
   kind: ToolKind;
   input_schema: Record<string, unknown>;
+  /** Write tools only: a successful execute also returns an `undo` proposal. */
+  undoable?: boolean;
   probe?: unknown;
 }
 
@@ -42,6 +44,7 @@ export function validateManifest(m: unknown): string[] {
     names.add(label);
     if (typeof t?.description !== "string" || !t.description) errors.push(`${label}: no description`);
     if (t?.kind !== "read" && t?.kind !== "write") errors.push(`${label}: kind must be read or write`);
+    if (t?.undoable !== undefined && (t.undoable !== true || t.kind !== "write")) errors.push(`${label}: undoable must be true and only on a write`);
     if (!t?.input_schema || (t.input_schema as { type?: unknown }).type !== "object") errors.push(`${label}: input_schema must be an object schema`);
   }
   return errors;

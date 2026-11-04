@@ -31,6 +31,8 @@ export function validateManifest(m) {
             errors.push(`${label}: no description`);
         if (t?.kind !== "read" && t?.kind !== "write")
             errors.push(`${label}: kind must be read or write`);
+        if (t?.undoable !== undefined && (t.undoable !== true || t.kind !== "write"))
+            errors.push(`${label}: undoable must be true and only on a write`);
         if (!t?.input_schema || t.input_schema.type !== "object")
             errors.push(`${label}: input_schema must be an object schema`);
     }

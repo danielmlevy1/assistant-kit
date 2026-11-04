@@ -11,6 +11,8 @@ export interface ManifestTool {
     description: string;
     kind: ToolKind;
     input_schema: Record<string, unknown>;
+    /** Write tools only: a successful execute also returns an `undo` proposal. */
+    undoable?: boolean;
     probe?: unknown;
 }
 export interface Manifest {

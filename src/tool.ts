@@ -56,12 +56,26 @@ export interface Proposal<I> {
   preview?: unknown;
 }
 
+/** The write that reverses one that just ran: another write tool of the same app, and its input. */
+export interface UndoTarget {
+  tool: string;
+  input: unknown;
+}
+
 export interface WriteTool<S extends Schema = Schema, R = unknown> extends ToolBase<S> {
   kind: "write";
   /** Check the write against live data and describe it. Writes nothing. */
   propose(ctx: ToolContext, input: z.output<S>): Promise<Proposal<z.output<S>>>;
   /** Perform exactly this one write through the app's write core. */
   run(ctx: ToolContext, input: z.output<S>): Promise<R>;
+  /**
+   * Optional: after `run` succeeds, name the write that puts things back (e.g.
+   * restore_recipe after archive_recipe), built from the input and `run`'s result.
+   * Return null when there is nothing to undo. The kit proposes it like any other
+   * write, so the undo is a signed proposal with the app's own summary, and only
+   * runs if the user taps Undo.
+   */
+  undo?(ctx: ToolContext, input: z.output<S>, result: R): UndoTarget | null | Promise<UndoTarget | null>;
 }
 
 export type AnyTool = ReadTool<any, any> | WriteTool<any, any>;
@@ -71,6 +85,7 @@ export function defineTool<S extends Schema, R>(def: WriteTool<S, R>): WriteTool
 export function defineTool(def: AnyTool): AnyTool {
   if (!TOOL_NAME.test(def.name)) throw new Error(`Tool name "${def.name}" must be snake_case, under 48 chars.`);
   if (!def.description?.trim()) throw new Error(`Tool "${def.name}" needs a description.`);
+  if ((def as { undo?: unknown }).undo !== undefined && def.kind !== "write") throw new Error(`Tool "${def.name}": only write tools can have undo.`);
   if (def.probe !== undefined) def.input.parse(def.probe);
   return def;
 }
@@ -92,6 +107,7 @@ export function buildManifest(app: string, tools: AnyTool[]): Manifest {
     description: t.description.trim(),
     kind: t.kind,
     input_schema: jsonSchema(t.input),
+    ...(t.kind === "write" && t.undo ? { undoable: true } : {}),
     ...(t.probe !== undefined ? { probe: t.probe } : {}),
   }));
   const toolsVersion = createHash("sha256")
